@@ -7,7 +7,7 @@ This guide will help you set up the CI/CD pipeline between:
 - **Public Repository**: `public-ztl-cicd` (handles builds and deployment)
 
 ## 🔧 Step 1: Configure Private Repository (`rust-ztl`)
-
+ß
 ### 1.1 Add the Trigger Workflow
 The trigger workflow should already be in your private repository at:
 ```
@@ -15,7 +15,7 @@ rust-ztl/.github/workflows/trigger-public-build.yml
 ```
 
 ### 1.2 Configure Secrets in Private Repository
-Go to your private repository settings → Secrets and variables → Actions
+Go to your private repository settings → Secsssßrets and variables → Actions
 
 Add these **Repository Secrets**:
 
@@ -28,7 +28,7 @@ Add these **Repository Secrets**:
 1. Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
 2. Click "Generate new token (classic)"
 3. Select scopes: `repo` (Full control of private repositories)
-4. Copy the token and use it as `PUBLIC_REPO_DISPATCH_TOKEN`
+4. Copy the token andß use it as `PUBLIC_REPO_DISPATCH_TOKEN`
 
 ## 🔧 Step 2: Configure Public Repository (`public-ztl-cicd`)
 
