@@ -119,10 +119,10 @@ jobs:
             arch: aarch64
             os_name: linux
     steps:
-      - name: Checkout private repository (rust-ztl)
+      - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.PRIVATE_REPO_NAME }}  # Should be: your-username/rust-ztl
+          repository: ZTL-Builder/rust-zlt
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
@@ -242,10 +242,10 @@ jobs:
             arch: x86_64
             os_name: windows
     steps:
-      - name: Checkout private repository (rust-ztl)
+      - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.PRIVATE_REPO_NAME }}  # Should be: your-username/rust-ztl
+          repository: ZTL-Builder/rust-zlt
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
@@ -336,10 +336,10 @@ jobs:
             arch: aarch64
             os_name: macos
     steps:
-      - name: Checkout private repository (rust-ztl)
+      - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.PRIVATE_REPO_NAME }}  # Should be: your-username/rust-ztl
+          repository: ZTL-Builder/rust-zlt
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
