@@ -6,21 +6,21 @@ on:
   workflow_dispatch:
     inputs:
       private_repo_ref:
-        description: 'Private repo branch/tag/commit to build'
+        description: "Private repo branch/tag/commit to build"
         required: false
-        default: 'main'
+        default: "main"
         type: string
       build_platforms:
-        description: 'Platforms to build (comma-separated: linux,windows,macos)'
+        description: "Platforms to build (comma-separated: linux,windows,macos)"
         required: false
-        default: 'linux,windows,macos'
+        default: "linux,windows,macos"
         type: string
       customer_name:
-        description: 'Customer Name (for branding/folder structure)'
+        description: "Customer Name (for branding/folder structure)"
         required: false
         type: string
       upload_to_s3:
-        description: 'Upload artifacts to S3'
+        description: "Upload artifacts to S3"
         required: false
         default: true
         type: boolean
@@ -57,11 +57,11 @@ jobs:
             CUSTOMER_NAME="${{ github.event.inputs.customer_name || '' }}"
             UPLOAD_TO_S3="${{ github.event.inputs.upload_to_s3 || 'true' }}"
           fi
-          
+
           echo "private_repo_ref=$PRIVATE_REPO_REF" >> $GITHUB_OUTPUT
           echo "customer_name=$CUSTOMER_NAME" >> $GITHUB_OUTPUT
           echo "upload_to_s3=$UPLOAD_TO_S3" >> $GITHUB_OUTPUT
-          
+
           # Create S3 prefix based on customer name and timestamp
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           if [ -n "$CUSTOMER_NAME" ]; then
@@ -70,7 +70,7 @@ jobs:
             S3_PREFIX="releases/$TIMESTAMP"
           fi
           echo "s3_prefix=$S3_PREFIX" >> $GITHUB_OUTPUT
-          
+
           echo "Build configuration:"
           echo "  Private repo ref: $PRIVATE_REPO_REF"
           echo "  Build platforms: $BUILD_PLATFORMS"
@@ -82,19 +82,19 @@ jobs:
         id: platforms
         run: |
           BUILD_PLATFORMS="${{ github.event.client_payload.build_platforms || github.event.inputs.build_platforms || 'linux,windows,macos' }}"
-          
+
           if [[ "$BUILD_PLATFORMS" == *"linux"* ]]; then
             echo "build_linux=true" >> $GITHUB_OUTPUT
           else
             echo "build_linux=false" >> $GITHUB_OUTPUT
           fi
-          
+
           if [[ "$BUILD_PLATFORMS" == *"windows"* ]]; then
             echo "build_windows=true" >> $GITHUB_OUTPUT
           else
             echo "build_windows=false" >> $GITHUB_OUTPUT
           fi
-          
+
           if [[ "$BUILD_PLATFORMS" == *"macos"* ]]; then
             echo "build_macos=true" >> $GITHUB_OUTPUT
           else
@@ -119,22 +119,40 @@ jobs:
             arch: aarch64
             os_name: linux
     steps:
+      - name: Verify secrets and parameters
+        run: |
+          echo "🔍 Verifying build parameters..."
+          if [ -z "${{ secrets.PRIVATE_REPO_NAME }}" ]; then
+            echo "❌ ERROR: PRIVATE_REPO_NAME secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.PRIVATE_REPO_TOKEN }}" ]; then
+            echo "❌ ERROR: PRIVATE_REPO_TOKEN secret is not set"
+            exit 1
+          fi
+          echo "✅ Repository: ${{ secrets.PRIVATE_REPO_NAME }}"
+          echo "✅ Reference: ${{ needs.setup.outputs.private_repo_ref }}"
+          echo "✅ Target: ${{ matrix.target }}"
+
       - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ZTL-Builder/rust-zlt
-          token: ${{ secrets.PUBLIC_REPO_SECRET_TOKEN }}
+          repository: ${{ secrets.PRIVATE_REPO_NAME }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
-          persist-credentials: true
-          persist-credentials: true
+          persist-credentials: false
+          fetch-depth: 1
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source-code
 
       - name: Install system dependencies
         if: matrix.use_cross == false
@@ -157,12 +175,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          cargo install cross --git https://github.com/cross-rs/cross
+
+          # Install cross with cargo-binstall for faster installation
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall --no-confirm cross
 
       - name: Build (cargo)
         if: matrix.use_cross == false
         working-directory: source-code
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          echo "🔨 Building for ${{ matrix.target }}..."
+          cargo build --release --target ${{ matrix.target }}
+          echo "✅ Build completed successfully"
 
       - name: Build (cross-compilation)
         if: matrix.use_cross == true
@@ -175,21 +199,21 @@ jobs:
               "apt-get update",
               "apt-get install --assume-yes pkg-config libssl-dev:arm64 libxcb1-dev:arm64 libxcb-render0-dev:arm64 libxcb-shape0-dev:arm64 libxcb-xfixes0-dev:arm64 libdbus-1-dev:arm64 libbz2-dev:arm64 zlib1g-dev:arm64 gcc-aarch64-linux-gnu"
           ]
-          
+
           [target.aarch64-unknown-linux-gnu.env]
           passthrough = [
               "PKG_CONFIG_ALLOW_CROSS=1",
               "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
           ]
           EOF
-          
+
           export PKG_CONFIG_ALLOW_CROSS=1
           export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
           export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
           export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
           export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-          
+
           cross build --release --target ${{ matrix.target }}
 
       - name: Package
@@ -201,14 +225,28 @@ jobs:
           mkdir -p "$OUT_DIR"
           BIN_NAME=${APP_NAME}
           ARCHIVE_NAME=${APP_NAME}-${{ matrix.os_name }}-${{ matrix.arch }}
-          
+
           # Add customer name to archive if provided
           if [ -n "${{ needs.setup.outputs.customer_name }}" ]; then
             ARCHIVE_NAME="${{ needs.setup.outputs.customer_name }}-${ARCHIVE_NAME}"
           fi
-          
+
+          echo "📦 Packaging binary..."
+          echo "Binary location: $BIN_DIR/$BIN_NAME"
+          echo "Archive name: ${ARCHIVE_NAME}.tar.gz"
+
+          # Verify binary exists
+          if [ ! -f "$BIN_DIR/$BIN_NAME" ]; then
+            echo "❌ ERROR: Binary not found at $BIN_DIR/$BIN_NAME"
+            ls -la "$BIN_DIR/"
+            exit 1
+          fi
+
           tar -C "$BIN_DIR" -czf "$OUT_DIR/${ARCHIVE_NAME}.tar.gz" "$BIN_NAME"
           (cd "$OUT_DIR" && sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256")
+
+          echo "✅ Package created successfully"
+          ls -la "$OUT_DIR/"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -244,24 +282,46 @@ jobs:
             arch: x86_64
             os_name: windows
     steps:
+      - name: Verify secrets and parameters
+        run: |
+          echo "🔍 Verifying build parameters..."
+          if ("${{ secrets.PRIVATE_REPO_NAME }}" -eq "") {
+            Write-Error "❌ ERROR: PRIVATE_REPO_NAME secret is not set"
+            exit 1
+          }
+          if ("${{ secrets.PRIVATE_REPO_TOKEN }}" -eq "") {
+            Write-Error "❌ ERROR: PRIVATE_REPO_TOKEN secret is not set"
+            exit 1
+          }
+          Write-Host "✅ Repository: ${{ secrets.PRIVATE_REPO_NAME }}"
+          Write-Host "✅ Reference: ${{ needs.setup.outputs.private_repo_ref }}"
+          Write-Host "✅ Target: ${{ matrix.target }}"
+
       - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ZTL-Builder/rust-zlt
-          token: ${{ secrets.PUBLIC_REPO_SECRET_TOKEN }}
+          repository: ${{ secrets.PRIVATE_REPO_NAME }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
+          fetch-depth: 1
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source-code
 
       - name: Build
         working-directory: source-code
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          Write-Host "🔨 Building for ${{ matrix.target }}..."
+          cargo build --release --target ${{ matrix.target }}
+          Write-Host "✅ Build completed successfully"
 
       - name: Package
         working-directory: source-code
@@ -272,24 +332,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path $OUT_DIR
           $BIN_NAME = "${{ env.APP_NAME }}.exe"
           $ARCHIVE_NAME = "${{ env.APP_NAME }}-${{ matrix.os_name }}-${{ matrix.arch }}"
-          
+
           # Add customer name to archive if provided
           if ("${{ needs.setup.outputs.customer_name }}" -ne "") {
             $ARCHIVE_NAME = "${{ needs.setup.outputs.customer_name }}-$ARCHIVE_NAME"
           }
-          
+
           # Create zip for Windows using PowerShell
           $sourcePath = Join-Path $BIN_DIR $BIN_NAME
           $zipPath = Join-Path $OUT_DIR "$ARCHIVE_NAME.zip"
-          
+
           # Compress the binary
           Compress-Archive -Path $sourcePath -DestinationPath $zipPath -Force
-          
+
           # Create SHA256 hash
           $hash = Get-FileHash -Path $zipPath -Algorithm SHA256
           $hashString = $hash.Hash.ToLower()
           "$hashString  $ARCHIVE_NAME.zip" | Out-File -FilePath "$OUT_DIR/$ARCHIVE_NAME.zip.sha256" -Encoding ascii
-          
+
           Write-Host "Created archive: $zipPath"
           Write-Host "Created hash: $OUT_DIR/$ARCHIVE_NAME.zip.sha256"
 
@@ -314,10 +374,10 @@ jobs:
         run: |
           Write-Host "Checking dist directory contents:"
           Get-ChildItem -Path "dist" -Recurse | Format-Table Name, Length, LastWriteTime
-          
+
           Write-Host "Uploading to S3..."
           aws s3 cp dist/ s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/windows/${{ matrix.arch }}/ --recursive
-          
+
           Write-Host "Uploaded ${{ matrix.arch }} binaries to S3 at ${{ needs.setup.outputs.s3_prefix }}/windows/${{ matrix.arch }}/"
 
   macos-build:
@@ -338,25 +398,47 @@ jobs:
             arch: aarch64
             os_name: macos
     steps:
+      - name: Verify secrets and parameters
+        run: |
+          echo "🔍 Verifying build parameters..."
+          if [ -z "${{ secrets.PRIVATE_REPO_NAME }}" ]; then
+            echo "❌ ERROR: PRIVATE_REPO_NAME secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.PRIVATE_REPO_TOKEN }}" ]; then
+            echo "❌ ERROR: PRIVATE_REPO_TOKEN secret is not set"
+            exit 1
+          fi
+          echo "✅ Repository: ${{ secrets.PRIVATE_REPO_NAME }}"
+          echo "✅ Reference: ${{ needs.setup.outputs.private_repo_ref }}"
+          echo "✅ Target: ${{ matrix.target }}"
+
       - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ZTL-Builder/rust-zlt
-          token: ${{ secrets.PUBLIC_REPO_SECRET_TOKEN }}
+          repository: ${{ secrets.PRIVATE_REPO_NAME }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
-          persist-credentials: true
+          persist-credentials: false
+          fetch-depth: 1
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source-code
 
       - name: Build
         working-directory: source-code
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          echo "🔨 Building for ${{ matrix.target }}..."
+          cargo build --release --target ${{ matrix.target }}
+          echo "✅ Build completed successfully"
 
       - name: Package
         working-directory: source-code
@@ -367,12 +449,12 @@ jobs:
           mkdir -p "$OUT_DIR"
           BIN_NAME=${APP_NAME}
           ARCHIVE_NAME=${APP_NAME}-${{ matrix.os_name }}-${{ matrix.arch }}
-          
+
           # Add customer name to archive if provided
           if [ -n "${{ needs.setup.outputs.customer_name }}" ]; then
             ARCHIVE_NAME="${{ needs.setup.outputs.customer_name }}-${ARCHIVE_NAME}"
           fi
-          
+
           tar -C "$BIN_DIR" -czf "$OUT_DIR/${ARCHIVE_NAME}.tar.gz" "$BIN_NAME"
           shasum -a 256 "$OUT_DIR/${ARCHIVE_NAME}.tar.gz" > "$OUT_DIR/${ARCHIVE_NAME}.tar.gz.sha256"
 
@@ -397,7 +479,6 @@ jobs:
           aws s3 cp dist/ s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/macos/${{ matrix.arch }}/ --recursive
           echo "Uploaded ${{ matrix.arch }} binaries to S3 at ${{ needs.setup.outputs.s3_prefix }}/macos/${{ matrix.arch }}/"
 
-
   notify:
     name: Build Complete Notification
     runs-on: ubuntu-latest
@@ -406,21 +487,63 @@ jobs:
     steps:
       - name: Build Summary
         run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Private repo ref**: ${{ needs.setup.outputs.private_repo_ref }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Customer**: ${{ needs.setup.outputs.customer_name || 'Default' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **S3 Location**: s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/" >> $GITHUB_STEP_SUMMARY
-          echo "- **Linux Build**: ${{ needs.linux-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Windows Build**: ${{ needs.windows-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **macOS Build**: ${{ needs.macos-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
-          
-          # Check if any builds failed
-          if [[ "${{ needs.linux-build.result }}" == "failure" ]] || \
-             [[ "${{ needs.windows-build.result }}" == "failure" ]] || \
-             [[ "${{ needs.macos-build.result }}" == "failure" ]]; then
-            echo "❌ Some builds failed!" >> $GITHUB_STEP_SUMMARY
+          echo "## 🏗️ Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **📂 Private repo ref**: ${{ needs.setup.outputs.private_repo_ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **👤 Customer**: ${{ needs.setup.outputs.customer_name || 'Default' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **☁️ S3 Location**: s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Platform Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- **🐧 Linux Build**: ${{ needs.linux-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **🪟 Windows Build**: ${{ needs.windows-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **🍎 macOS Build**: ${{ needs.macos-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Count successes and failures
+          SUCCESS_COUNT=0
+          FAILURE_COUNT=0
+          TOTAL_COUNT=0
+
+          if [[ "${{ needs.setup.outputs.build_linux }}" == "true" ]]; then
+            TOTAL_COUNT=$((TOTAL_COUNT + 1))
+            if [[ "${{ needs.linux-build.result }}" == "success" ]]; then
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+              FAILURE_COUNT=$((FAILURE_COUNT + 1))
+            fi
+          fi
+
+          if [[ "${{ needs.setup.outputs.build_windows }}" == "true" ]]; then
+            TOTAL_COUNT=$((TOTAL_COUNT + 1))
+            if [[ "${{ needs.windows-build.result }}" == "success" ]]; then
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+              FAILURE_COUNT=$((FAILURE_COUNT + 1))
+            fi
+          fi
+
+          if [[ "${{ needs.setup.outputs.build_macos }}" == "true" ]]; then
+            TOTAL_COUNT=$((TOTAL_COUNT + 1))
+            if [[ "${{ needs.macos-build.result }}" == "success" ]]; then
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+              FAILURE_COUNT=$((FAILURE_COUNT + 1))
+            fi
+          fi
+
+          echo "### 📊 Build Statistics:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total**: $TOTAL_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- **✅ Successful**: $SUCCESS_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- **❌ Failed**: $FAILURE_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Final status
+          if [[ $FAILURE_COUNT -gt 0 ]]; then
+            echo "❌ **$FAILURE_COUNT out of $TOTAL_COUNT builds failed!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please check the individual job logs for error details." >> $GITHUB_STEP_SUMMARY
             exit 1
           else
-            echo "✅ All requested builds completed successfully!" >> $GITHUB_STEP_SUMMARY
-            echo "📦 Artifacts uploaded to S3 successfully!" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 **All $SUCCESS_COUNT builds completed successfully!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📦 Artifacts have been uploaded to S3 and are available as GitHub artifacts." >> $GITHUB_STEP_SUMMARY
           fi
