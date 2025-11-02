@@ -122,10 +122,12 @@ jobs:
       - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ZTL-Builder/rust-ztl
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          repository: ZTL-Builder/rust-zlt
+          token: ${{ secrets.PUBLIC_REPO_SECRET_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
+          persist-credentials: true
+          persist-credentials: true
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -221,7 +223,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 1200
 
       - name: Upload to S3
         if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
@@ -243,11 +244,11 @@ jobs:
             arch: x86_64
             os_name: windows
     steps:
-      - name: Checkout private repository (rust-ztl)
+      - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ZTL-Builder/rust-ztl
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          repository: ZTL-Builder/rust-zlt
+          token: ${{ secrets.PUBLIC_REPO_SECRET_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
 
@@ -305,7 +306,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 1200
 
       - name: Upload to S3
         if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
@@ -338,13 +338,14 @@ jobs:
             arch: aarch64
             os_name: macos
     steps:
-      - name: Checkout private repository (rust-ztl)
+      - name: Checkout private repository (rust-zlt)
         uses: actions/checkout@v4
         with:
-          repository: ZTL-Builder/rust-ztl
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          repository: ZTL-Builder/rust-zlt
+          token: ${{ secrets.PUBLIC_REPO_SECRET_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
           path: source-code
+          persist-credentials: true
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -388,7 +389,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 1200
 
       - name: Upload to S3
         if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
