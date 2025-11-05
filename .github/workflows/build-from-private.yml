@@ -1,4 +1,4 @@
-name: Build from Private Repository
+name: ZTL-MK1 Unified Build
 
 on:
   repository_dispatch:
@@ -6,30 +6,30 @@ on:
   workflow_dispatch:
     inputs:
       private_repo_ref:
-        description: "Private repo branch/tag/commit to build"
+        description: "Private repo branch or commit"
         required: false
         default: "main"
         type: string
       build_platforms:
-        description: "Platforms to build (comma-separated: linux,windows,macos)"
+        description: "Platforms to build (linux,windows,macos)"
         required: false
         default: "linux,windows,macos"
         type: string
       customer_name:
-        description: "Customer Name (for branding/folder structure)"
-        required: false
+        description: "ZTL Unique ID (e.g. ZTLMK1-2UFPG2)"
+        required: true
         type: string
       upload_to_s3:
-        description: "Upload artifacts to S3"
+        description: "Upload binaries to S3"
         required: false
         default: true
         type: boolean
 
 env:
-  CARGO_TERM_COLOR: always
   APP_NAME: ztl
   AWS_REGION: ap-south-1
   AWS_S3_BUCKET: ztl-exe
+  CARGO_TERM_COLOR: always
 
 jobs:
   setup:
@@ -45,7 +45,6 @@ jobs:
       - name: Parse inputs
         id: inputs
         run: |
-          # Handle repository_dispatch vs workflow_dispatch inputs
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             PRIVATE_REPO_REF="${{ github.event.client_payload.private_repo_ref || 'main' }}"
             BUILD_PLATFORMS="${{ github.event.client_payload.build_platforms || 'linux,windows,macos' }}"
@@ -62,47 +61,30 @@ jobs:
           echo "customer_name=$CUSTOMER_NAME" >> $GITHUB_OUTPUT
           echo "upload_to_s3=$UPLOAD_TO_S3" >> $GITHUB_OUTPUT
 
-          # Create S3 prefix based on customer name and timestamp
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          # ✅ Fixed S3 structure
           if [ -n "$CUSTOMER_NAME" ]; then
-            S3_PREFIX="customers/$CUSTOMER_NAME/$TIMESTAMP"
+            S3_PREFIX="ztlmk1/$CUSTOMER_NAME"
           else
-            S3_PREFIX="releases/$TIMESTAMP"
+            S3_PREFIX="ztlmk1/unknown"
           fi
           echo "s3_prefix=$S3_PREFIX" >> $GITHUB_OUTPUT
 
-          echo "Build configuration:"
-          echo "  Private repo ref: $PRIVATE_REPO_REF"
-          echo "  Build platforms: $BUILD_PLATFORMS"
-          echo "  Customer name: $CUSTOMER_NAME"
+          echo "✅ Parsed inputs:"
+          echo "  Repo ref: $PRIVATE_REPO_REF"
+          echo "  Platforms: $BUILD_PLATFORMS"
+          echo "  ZTL ID: $CUSTOMER_NAME"
           echo "  S3 prefix: $S3_PREFIX"
-          echo "  Upload to S3: $UPLOAD_TO_S3"
 
       - name: Determine build platforms
         id: platforms
         run: |
           BUILD_PLATFORMS="${{ github.event.client_payload.build_platforms || github.event.inputs.build_platforms || 'linux,windows,macos' }}"
-
-          if [[ "$BUILD_PLATFORMS" == *"linux"* ]]; then
-            echo "build_linux=true" >> $GITHUB_OUTPUT
-          else
-            echo "build_linux=false" >> $GITHUB_OUTPUT
-          fi
-
-          if [[ "$BUILD_PLATFORMS" == *"windows"* ]]; then
-            echo "build_windows=true" >> $GITHUB_OUTPUT
-          else
-            echo "build_windows=false" >> $GITHUB_OUTPUT
-          fi
-
-          if [[ "$BUILD_PLATFORMS" == *"macos"* ]]; then
-            echo "build_macos=true" >> $GITHUB_OUTPUT
-          else
-            echo "build_macos=false" >> $GITHUB_OUTPUT
-          fi
+          [[ "$BUILD_PLATFORMS" == *"linux"* ]] && echo "build_linux=true" >> $GITHUB_OUTPUT || echo "build_linux=false" >> $GITHUB_OUTPUT
+          [[ "$BUILD_PLATFORMS" == *"windows"* ]] && echo "build_windows=true" >> $GITHUB_OUTPUT || echo "build_windows=false" >> $GITHUB_OUTPUT
+          [[ "$BUILD_PLATFORMS" == *"macos"* ]] && echo "build_macos=true" >> $GITHUB_OUTPUT || echo "build_macos=false" >> $GITHUB_OUTPUT
 
   linux-build:
-    name: Linux ${{ matrix.target }}
+    name: 🐧 Linux Build
     runs-on: ubuntu-latest
     needs: setup
     if: needs.setup.outputs.build_linux == 'true'
@@ -111,151 +93,34 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            use_cross: false
             arch: x86_64
-            os_name: linux
           - target: aarch64-unknown-linux-gnu
-            use_cross: true
             arch: aarch64
-            os_name: linux
     steps:
-      - name: Verify secrets and parameters
-        run: |
-          echo "🔍 Verifying build parameters..."
-          if [ -z "${{ secrets.PRIVATE_REPO_NAME }}" ]; then
-            echo "❌ ERROR: PRIVATE_REPO_NAME secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.PRIVATE_REPO_TOKEN }}" ]; then
-            echo "❌ ERROR: PRIVATE_REPO_TOKEN secret is not set"
-            exit 1
-          fi
-          echo "✅ Repository: ${{ secrets.PRIVATE_REPO_NAME }}"
-          echo "✅ Reference: ${{ needs.setup.outputs.private_repo_ref }}"
-          echo "✅ Target: ${{ matrix.target }}"
-
-      - name: Checkout private repository (rust-zlt)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: ${{ secrets.PRIVATE_REPO_NAME }}
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
-          path: source-code
-          persist-credentials: false
-          fetch-depth: 1
+          path: source
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: source-code
+          workspaces: source
 
-      - name: Install system dependencies
-        if: matrix.use_cross == false
+      - name: Build binary
+        working-directory: source
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libssl-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libdbus-1-dev \
-            libbz2-dev \
-            zlib1g-dev \
-            build-essential
-
-      - name: Install cross-compilation dependencies
-        if: matrix.use_cross == true
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
-          # Install cross with cargo-binstall for faster installation
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall --no-confirm cross
-
-      - name: Build (cargo)
-        if: matrix.use_cross == false
-        working-directory: source-code
-        run: |
-          echo "🔨 Building for ${{ matrix.target }}..."
+          echo "🔨 Building Linux binary..."
           cargo build --release --target ${{ matrix.target }}
-          echo "✅ Build completed successfully"
-
-      - name: Build (cross-compilation)
-        if: matrix.use_cross == true
-        working-directory: source-code
-        run: |
-          cat > Cross.toml << 'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          pre-build = [
-              "dpkg --add-architecture arm64",
-              "apt-get update",
-              "apt-get install --assume-yes pkg-config libssl-dev:arm64 libxcb1-dev:arm64 libxcb-render0-dev:arm64 libxcb-shape0-dev:arm64 libxcb-xfixes0-dev:arm64 libdbus-1-dev:arm64 libbz2-dev:arm64 zlib1g-dev:arm64 gcc-aarch64-linux-gnu"
-          ]
-
-          [target.aarch64-unknown-linux-gnu.env]
-          passthrough = [
-              "PKG_CONFIG_ALLOW_CROSS=1",
-              "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
-          ]
-          EOF
-
-          export PKG_CONFIG_ALLOW_CROSS=1
-          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
-          export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
-          export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
-          export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-
-          cross build --release --target ${{ matrix.target }}
-
-      - name: Package
-        working-directory: source-code
-        shell: bash
-        run: |
-          BIN_DIR=target/${{ matrix.target }}/release
-          OUT_DIR=dist
-          mkdir -p "$OUT_DIR"
-          BIN_NAME=${APP_NAME}
-          ARCHIVE_NAME=${APP_NAME}-${{ matrix.os_name }}-${{ matrix.arch }}
-
-          # Add customer name to archive if provided
-          if [ -n "${{ needs.setup.outputs.customer_name }}" ]; then
-            ARCHIVE_NAME="${{ needs.setup.outputs.customer_name }}-${ARCHIVE_NAME}"
-          fi
-
-          echo "📦 Packaging binary..."
-          echo "Binary location: $BIN_DIR/$BIN_NAME"
-          echo "Archive name: ${ARCHIVE_NAME}.tar.gz"
-
-          # Verify binary exists
-          if [ ! -f "$BIN_DIR/$BIN_NAME" ]; then
-            echo "❌ ERROR: Binary not found at $BIN_DIR/$BIN_NAME"
-            ls -la "$BIN_DIR/"
-            exit 1
-          fi
-
-          tar -C "$BIN_DIR" -czf "$OUT_DIR/${ARCHIVE_NAME}.tar.gz" "$BIN_NAME"
-          (cd "$OUT_DIR" && sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256")
-
-          echo "✅ Package created successfully"
-          ls -la "$OUT_DIR/"
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_NAME }}-${{ matrix.os_name }}-${{ matrix.arch }}
-          path: source-code/dist/*
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ env.APP_NAME }} dist/
 
       - name: Configure AWS credentials
-        if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -263,104 +128,41 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload to S3
-        if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
-        working-directory: source-code
+        working-directory: source
         run: |
           aws s3 cp dist/ s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/linux/${{ matrix.arch }}/ --recursive
-          echo "Uploaded ${{ matrix.arch }} binaries to S3 at ${{ needs.setup.outputs.s3_prefix }}/linux/${{ matrix.arch }}/"
+          echo "✅ Uploaded Linux (${{ matrix.arch }}) binaries"
 
   windows-build:
-    name: Windows ${{ matrix.target }}
+    name: 🪟 Windows Build
     runs-on: windows-latest
     needs: setup
     if: needs.setup.outputs.build_windows == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-pc-windows-msvc
-            arch: x86_64
-            os_name: windows
     steps:
-      - name: Verify secrets and parameters
-        run: |
-          echo "🔍 Verifying build parameters..."
-          if ("${{ secrets.PRIVATE_REPO_NAME }}" -eq "") {
-            Write-Error "❌ ERROR: PRIVATE_REPO_NAME secret is not set"
-            exit 1
-          }
-          if ("${{ secrets.PRIVATE_REPO_TOKEN }}" -eq "") {
-            Write-Error "❌ ERROR: PRIVATE_REPO_TOKEN secret is not set"
-            exit 1
-          }
-          Write-Host "✅ Repository: ${{ secrets.PRIVATE_REPO_NAME }}"
-          Write-Host "✅ Reference: ${{ needs.setup.outputs.private_repo_ref }}"
-          Write-Host "✅ Target: ${{ matrix.target }}"
-
-      - name: Checkout private repository (rust-zlt)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: ${{ secrets.PRIVATE_REPO_NAME }}
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
-          path: source-code
-          fetch-depth: 1
+          path: source
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-pc-windows-msvc
 
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: source-code
+          workspaces: source
 
-      - name: Build
-        working-directory: source-code
+      - name: Build binary
+        working-directory: source
+        shell: pwsh
         run: |
-          Write-Host "🔨 Building for ${{ matrix.target }}..."
-          cargo build --release --target ${{ matrix.target }}
-          Write-Host "✅ Build completed successfully"
-
-      - name: Package
-        working-directory: source-code
-        shell: powershell
-        run: |
-          $BIN_DIR = "target/${{ matrix.target }}/release"
-          $OUT_DIR = "dist"
-          New-Item -ItemType Directory -Force -Path $OUT_DIR
-          $BIN_NAME = "${{ env.APP_NAME }}.exe"
-          $ARCHIVE_NAME = "${{ env.APP_NAME }}-${{ matrix.os_name }}-${{ matrix.arch }}"
-
-          # Add customer name to archive if provided
-          if ("${{ needs.setup.outputs.customer_name }}" -ne "") {
-            $ARCHIVE_NAME = "${{ needs.setup.outputs.customer_name }}-$ARCHIVE_NAME"
-          }
-
-          # Create zip for Windows using PowerShell
-          $sourcePath = Join-Path $BIN_DIR $BIN_NAME
-          $zipPath = Join-Path $OUT_DIR "$ARCHIVE_NAME.zip"
-
-          # Compress the binary
-          Compress-Archive -Path $sourcePath -DestinationPath $zipPath -Force
-
-          # Create SHA256 hash
-          $hash = Get-FileHash -Path $zipPath -Algorithm SHA256
-          $hashString = $hash.Hash.ToLower()
-          "$hashString  $ARCHIVE_NAME.zip" | Out-File -FilePath "$OUT_DIR/$ARCHIVE_NAME.zip.sha256" -Encoding ascii
-
-          Write-Host "Created archive: $zipPath"
-          Write-Host "Created hash: $OUT_DIR/$ARCHIVE_NAME.zip.sha256"
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_NAME }}-${{ matrix.os_name }}-${{ matrix.arch }}
-          path: source-code/dist/*
+          cargo build --release --target x86_64-pc-windows-msvc
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "target/x86_64-pc-windows-msvc/release/${{ env.APP_NAME }}.exe" dist/
 
       - name: Configure AWS credentials
-        if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -368,20 +170,14 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload to S3
-        if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
-        working-directory: source-code
-        shell: powershell
+        working-directory: source
+        shell: pwsh
         run: |
-          Write-Host "Checking dist directory contents:"
-          Get-ChildItem -Path "dist" -Recurse | Format-Table Name, Length, LastWriteTime
-
-          Write-Host "Uploading to S3..."
-          aws s3 cp dist/ s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/windows/${{ matrix.arch }}/ --recursive
-
-          Write-Host "Uploaded ${{ matrix.arch }} binaries to S3 at ${{ needs.setup.outputs.s3_prefix }}/windows/${{ matrix.arch }}/"
+          aws s3 cp dist/ s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/windows/x86_64/ --recursive
+          Write-Host "✅ Uploaded Windows binaries"
 
   macos-build:
-    name: macOS ${{ matrix.target }}
+    name: 🍎 macOS Build
     runs-on: ${{ matrix.runner }}
     needs: setup
     if: needs.setup.outputs.build_macos == 'true'
@@ -392,80 +188,33 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-13
             arch: x86_64
-            os_name: macos
           - target: aarch64-apple-darwin
             runner: macos-14
             arch: aarch64
-            os_name: macos
     steps:
-      - name: Verify secrets and parameters
-        run: |
-          echo "🔍 Verifying build parameters..."
-          if [ -z "${{ secrets.PRIVATE_REPO_NAME }}" ]; then
-            echo "❌ ERROR: PRIVATE_REPO_NAME secret is not set"
-            exit 1
-          fi
-          if [ -z "${{ secrets.PRIVATE_REPO_TOKEN }}" ]; then
-            echo "❌ ERROR: PRIVATE_REPO_TOKEN secret is not set"
-            exit 1
-          fi
-          echo "✅ Repository: ${{ secrets.PRIVATE_REPO_NAME }}"
-          echo "✅ Reference: ${{ needs.setup.outputs.private_repo_ref }}"
-          echo "✅ Target: ${{ matrix.target }}"
-
-      - name: Checkout private repository (rust-zlt)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: ${{ secrets.PRIVATE_REPO_NAME }}
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: ${{ needs.setup.outputs.private_repo_ref }}
-          path: source-code
-          persist-credentials: false
-          fetch-depth: 1
+          path: source
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: source-code
+          workspaces: source
 
-      - name: Build
-        working-directory: source-code
+      - name: Build binary
+        working-directory: source
         run: |
-          echo "🔨 Building for ${{ matrix.target }}..."
           cargo build --release --target ${{ matrix.target }}
-          echo "✅ Build completed successfully"
-
-      - name: Package
-        working-directory: source-code
-        shell: bash
-        run: |
-          BIN_DIR=target/${{ matrix.target }}/release
-          OUT_DIR=dist
-          mkdir -p "$OUT_DIR"
-          BIN_NAME=${APP_NAME}
-          ARCHIVE_NAME=${APP_NAME}-${{ matrix.os_name }}-${{ matrix.arch }}
-
-          # Add customer name to archive if provided
-          if [ -n "${{ needs.setup.outputs.customer_name }}" ]; then
-            ARCHIVE_NAME="${{ needs.setup.outputs.customer_name }}-${ARCHIVE_NAME}"
-          fi
-
-          tar -C "$BIN_DIR" -czf "$OUT_DIR/${ARCHIVE_NAME}.tar.gz" "$BIN_NAME"
-          shasum -a 256 "$OUT_DIR/${ARCHIVE_NAME}.tar.gz" > "$OUT_DIR/${ARCHIVE_NAME}.tar.gz.sha256"
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_NAME }}-${{ matrix.os_name }}-${{ matrix.arch }}
-          path: source-code/dist/*
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ env.APP_NAME }} dist/
 
       - name: Configure AWS credentials
-        if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -473,77 +222,24 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload to S3
-        if: github.event.inputs.upload_to_s3 != 'false' && github.event.client_payload.upload_to_s3 != 'false'
-        working-directory: source-code
+        working-directory: source
         run: |
           aws s3 cp dist/ s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/macos/${{ matrix.arch }}/ --recursive
-          echo "Uploaded ${{ matrix.arch }} binaries to S3 at ${{ needs.setup.outputs.s3_prefix }}/macos/${{ matrix.arch }}/"
+          echo "✅ Uploaded macOS (${{ matrix.arch }}) binaries"
 
   notify:
-    name: Build Complete Notification
+    name: 📩 Telegram Notification
     runs-on: ubuntu-latest
     needs: [setup, linux-build, windows-build, macos-build]
     if: always()
     steps:
-      - name: Build Summary
+      - name: Send Telegram message
         run: |
-          echo "## 🏗️ Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **📂 Private repo ref**: ${{ needs.setup.outputs.private_repo_ref }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **👤 Customer**: ${{ needs.setup.outputs.customer_name || 'Default' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **☁️ S3 Location**: s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Platform Results:" >> $GITHUB_STEP_SUMMARY
-          echo "- **🐧 Linux Build**: ${{ needs.linux-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **🪟 Windows Build**: ${{ needs.windows-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **🍎 macOS Build**: ${{ needs.macos-build.result || 'Skipped' }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Count successes and failures
-          SUCCESS_COUNT=0
-          FAILURE_COUNT=0
-          TOTAL_COUNT=0
-
-          if [[ "${{ needs.setup.outputs.build_linux }}" == "true" ]]; then
-            TOTAL_COUNT=$((TOTAL_COUNT + 1))
-            if [[ "${{ needs.linux-build.result }}" == "success" ]]; then
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            else
-              FAILURE_COUNT=$((FAILURE_COUNT + 1))
-            fi
-          fi
-
-          if [[ "${{ needs.setup.outputs.build_windows }}" == "true" ]]; then
-            TOTAL_COUNT=$((TOTAL_COUNT + 1))
-            if [[ "${{ needs.windows-build.result }}" == "success" ]]; then
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            else
-              FAILURE_COUNT=$((FAILURE_COUNT + 1))
-            fi
-          fi
-
-          if [[ "${{ needs.setup.outputs.build_macos }}" == "true" ]]; then
-            TOTAL_COUNT=$((TOTAL_COUNT + 1))
-            if [[ "${{ needs.macos-build.result }}" == "success" ]]; then
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            else
-              FAILURE_COUNT=$((FAILURE_COUNT + 1))
-            fi
-          fi
-
-          echo "### 📊 Build Statistics:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Total**: $TOTAL_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "- **✅ Successful**: $SUCCESS_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "- **❌ Failed**: $FAILURE_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Final status
-          if [[ $FAILURE_COUNT -gt 0 ]]; then
-            echo "❌ **$FAILURE_COUNT out of $TOTAL_COUNT builds failed!**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Please check the individual job logs for error details." >> $GITHUB_STEP_SUMMARY
-            exit 1
-          else
-            echo "🎉 **All $SUCCESS_COUNT builds completed successfully!**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "📦 Artifacts have been uploaded to S3 and are available as GitHub artifacts." >> $GITHUB_STEP_SUMMARY
-          fi
+          CHAT_ID="${{ github.event.client_payload.telegram_chat_id || secrets.TELEGRAM_CHAT_ID }}"
+          MSG="✅ ZTL build completed for ID: *${{ needs.setup.outputs.customer_name }}*\n\
+          📂 S3: s3://${{ env.AWS_S3_BUCKET }}/${{ needs.setup.outputs.s3_prefix }}/\n\
+          🐧 Linux: linux/\n🪟 Windows: windows/\n🍎 macOS: macos/"
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id="$CHAT_ID" \
+          -d parse_mode="Markdown" \
+          -d text="$MSG"
